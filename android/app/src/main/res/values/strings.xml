@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">GMMCIA2</string>
+    <string name="GOOGLE_MAPS_API_KEY">AIzaSyCuGLGjiskywn6bme2gxZWkoYlj00iWrZk</string>
 </resources>
