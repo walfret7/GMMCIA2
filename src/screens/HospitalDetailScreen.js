@@ -1,53 +1,56 @@
 import React from 'react';
-import { View, Text, Button, StyleSheet, Linking, Alert } from 'react-native';
-
-function toCoord(location) {
-  if (!location) return null;
-  if (typeof location.lat === 'number' && typeof location.lng === 'number')
-    return { latitude: location.lat, longitude: location.lng };
-  if (typeof location.latitude === 'number' && typeof location.longitude === 'number')
-    return { latitude: location.latitude, longitude: location.longitude };
-  if (typeof location._latitude === 'number' && typeof location._longitude === 'number')
-    return { latitude: location._latitude, longitude: location._longitude };
-  const lat = Number(location.lat ?? location.latitude);
-  const lng = Number(location.lng ?? location.longitude);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return { latitude: lat, longitude: lng };
-  return null;
-}
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Linking } from 'react-native';
 
 export default function HospitalDetailScreen({ route }) {
-  const h = route.params?.hospital || {};
-  const coord = toCoord(h.location);
+  const h = route.params?.hospital;
+  if (!h) return <View style={styles.center}><Text>No se encontró el hospital.</Text></View>;
 
   const openMaps = () => {
-    if (coord) {
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${coord.latitude},${coord.longitude}`;
-      Linking.openURL(url).catch(() => Alert.alert('Ups', 'No se pudo abrir Google Maps'));
-    } else if (h.address) {
-      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(h.address)}`;
-      Linking.openURL(url).catch(() => Alert.alert('Ups', 'No se pudo abrir Google Maps'));
-    } else {
-      Alert.alert('Sin ubicación', 'Este hospital no tiene coordenadas ni dirección.');
-    }
+    const lat = h?.location?.lat, lng = h?.location?.lng;
+    const q = encodeURIComponent(`${h.name} ${h.address || ''}`);
+    // si tenemos coords, mejor con coords
+    const url = (typeof lat === 'number' && typeof lng === 'number')
+      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+      : `https://www.google.com/maps/search/?api=1&query=${q}`;
+    Linking.openURL(url).catch(() => Alert.alert('Error', 'No se pudo abrir Google Maps'));
   };
 
+  const specialties = Array.isArray(h.specialties) ? h.specialties : [];
+
   return (
-    <View style={styles.box}>
-      <Text style={styles.title}>{h.name}</Text>
-      <Text style={styles.text}>{h.address || '(sin dirección)'}</Text>
-      <Text style={styles.text}>
-        {Array.isArray(h.specialties) ? h.specialties.join(' · ') : '(sin especialidades)'}
-      </Text>
-      {h.emergency24h ? <Text style={styles.badge}>Emergencia 24h</Text> : null}
-      <View style={{ height: 12 }} />
-      <Button title="Cómo llegar" onPress={openMaps} />
-    </View>
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.title}>{h.name || '(sin nombre)'}</Text>
+      {!!h.address && <Text style={styles.addr}>{h.address}</Text>}
+
+      <View style={styles.badges}>
+        {h.emergency24h ? <Text style={[styles.badge, styles.badgeOk]}>Emergencia 24h</Text>
+                        : <Text style={[styles.badge, styles.badgeWarn]}>Sin emergencia 24h</Text>}
+      </View>
+
+      <Text style={styles.section}>Especialidades</Text>
+      {specialties.length
+        ? specialties.map((s, i) => (<Text key={i} style={styles.item}>• {s}</Text>))
+        : <Text style={styles.muted}>(sin especialidades)</Text>}
+
+      <Pressable style={styles.btn} onPress={openMaps}>
+        <Text style={styles.btnText}>Cómo llegar</Text>
+      </Pressable>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  box: { flex: 1, padding: 16 },
-  title: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
-  text: { marginTop: 6 },
-  badge: { marginTop: 8, fontWeight: '700' },
+  center:{flex:1,alignItems:'center',justifyContent:'center'},
+  container:{padding:16, gap:10},
+  title:{fontSize:20,fontWeight:'700'},
+  addr:{opacity:0.8},
+  badges:{flexDirection:'row',gap:8,marginTop:6},
+  badge:{paddingVertical:4,paddingHorizontal:8,borderRadius:8,overflow:'hidden',fontWeight:'600'},
+  badgeOk:{backgroundColor:'#e8f8ef',color:'#0a7f43'},
+  badgeWarn:{backgroundColor:'#fdecea',color:'#b71c1c'},
+  section:{marginTop:14,fontSize:16,fontWeight:'700'},
+  item:{fontSize:14},
+  muted:{opacity:0.6},
+  btn:{marginTop:18,backgroundColor:'#0a84ff',padding:12,borderRadius:10,alignItems:'center'},
+  btnText:{color:'#fff',fontWeight:'700'}
 });

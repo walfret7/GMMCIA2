@@ -5,6 +5,8 @@ import AppTabs from './AppTabs';
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
 import { ActivityIndicator, View } from 'react-native';
+import HospitalDetailScreen from '../screens/HospitalDetailScreen';
+
 
 const Stack = createNativeStackNavigator();
 
@@ -38,6 +40,7 @@ export default function AuthGate() {
         <>
           <Stack.Screen name="Login" component={LoginScreen} options={{ title: 'Ingresar' }} />
           <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Crear cuenta' }} />
+          <Stack.Screen name="Detalle" component={HospitalDetailScreen} options={{ title: 'Detalle' }} />
         </>
       )}
     </Stack.Navigator>
