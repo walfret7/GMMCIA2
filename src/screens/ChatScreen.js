@@ -1,6 +1,18 @@
+// src/screens/ChatScreen.js
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, Alert, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  Alert,
+  StyleSheet,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import auth from '@react-native-firebase/auth';
 import { useFilters } from '../state/FiltersContext';
 
 /* Util: normaliza texto (sin tildes, minúsculas) */
@@ -108,10 +120,7 @@ export default function ChatScreen() {
       Alert.alert('Escribe tus síntomas', 'Ej: dolor de pecho y falta de aire');
       return;
     }
-
     const { mode, specialty, severity } = classifySymptoms(t);
-
-    // setea filtros globales (MapScreen ya los usa)
     setFilters({ mode, specialty: specialty || '', severity });
 
     const msg =
@@ -126,33 +135,92 @@ export default function ChatScreen() {
   };
 
   return (
-    <View style={styles.box}>
-      <Text style={styles.title}>Describe tus síntomas</Text>
-      <TextInput
-        multiline
-        placeholder="Ej: dolor de pecho y falta de aire desde ayer"
-        value={text}
-        onChangeText={setText}
-        style={styles.input}
-      />
-      <Button title="Analizar y ver hospitales" onPress={onAnalyze} />
-      <Text style={styles.hint}>
-        El resultado aplicará filtros en el Mapa (podés quitarlos desde el banner).
-      </Text>
-    </View>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: '#F6F8FB' }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Chat Médico</Text>
+        <TouchableOpacity onPress={() => auth().signOut()} style={styles.headerBtn}>
+          <Text style={styles.headerBtnText}>Salir</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Body */}
+      <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.card}>
+          <Text style={styles.title}>Describe tus síntomas</Text>
+
+          <TextInput
+            multiline
+            placeholder="Ej: dolor de pecho y falta de aire desde ayer"
+            value={text}
+            onChangeText={setText}
+            style={styles.input}
+          />
+
+          <TouchableOpacity onPress={onAnalyze} style={styles.primaryBtn}>
+            <Text style={styles.primaryBtnText}>Analizar y ver hospitales</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.hint}>
+            El resultado aplicará filtros en el mapa (podés quitarlos desde el banner).
+          </Text>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  box: { flex: 1, padding: 16, gap: 12 },
-  title: { fontSize: 18, fontWeight: '700' },
+  header: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    elevation: 4,
+  },
+  headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  headerBtn: {
+    backgroundColor: '#fff',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  headerBtnText: { color: '#2563EB', fontWeight: '700' },
+
+  container: { padding: 16 },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+  },
+  title: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
   input: {
     minHeight: 120,
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 10,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8,
     textAlignVertical: 'top',
+    fontSize: 15,
+    color: '#0F172A',
   },
-  hint: { opacity: 0.7, marginTop: 8 },
+  primaryBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  hint: { color: '#475569', marginTop: 12, textAlign: 'center', fontSize: 13 },
 });

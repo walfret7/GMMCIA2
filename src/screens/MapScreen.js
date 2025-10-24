@@ -1,10 +1,12 @@
 // src/screens/MapScreen.js
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { View, ActivityIndicator, Text, Pressable } from 'react-native';
+import { View, ActivityIndicator, Text } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { useNavigation } from '@react-navigation/native';
 import { getAllHospitals } from '../services/hospitals';
 import { useFilters } from '../state/FiltersContext';
+import Banner from '../components/Banner';
+import theme from '../theme';
 
 // Normaliza: sin tildes, sin espacios/guiones, minúsculas
 function normalize(str = '') {
@@ -32,14 +34,28 @@ function toCoord(location) {
   return null;
 }
 
+/** Estilo azulado (Google Maps JSON) + ocultar POIs/negocios */
+const BLUE_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#eaf2ff' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#64748b' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#eaf2ff' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#dbeafe' }] },
+  { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c7d2fe' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.business', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.park', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+];
+
 export default function MapScreen() {
   const navigation = useNavigation();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const mapRef = useRef(null);
 
-  // usamos mode + specialty (sin mezclar)
-  const { mode, specialty, hasActiveFilters, clearFilters } = useFilters();
+  const { mode, specialty, severity, hasActiveFilters, clearFilters } = useFilters();
   const normSpec = useMemo(() => normalize(specialty), [specialty]);
 
   useEffect(() => {
@@ -62,7 +78,6 @@ export default function MapScreen() {
     if (!hasActiveFilters) return rows;
 
     if (mode === 'emergency') {
-      // solo hospitales con emergencia 24h
       return rows.filter(h => h.emergency24h === true);
     }
 
@@ -83,13 +98,13 @@ export default function MapScreen() {
     return `${ids}::${mode}::${normSpec}`;
   }, [listToRender, mode, normSpec]);
 
-  // encuadre del mapa (memoizado)
+  // encuadre del mapa
   const doFit = useCallback(() => {
     const coords = listToRender.map(h => toCoord(h.location)).filter(Boolean);
     if (coords.length && mapRef.current) {
       try {
         mapRef.current.fitToCoordinates(coords, {
-          edgePadding: { top: 60, right: 40, bottom: 60, left: 40 },
+          edgePadding: { top: 110, right: 40, bottom: 80, left: 40 }, // más espacio por banner
           animated: true,
         });
       } catch {}
@@ -110,32 +125,57 @@ export default function MapScreen() {
     mode === 'emergency'
       ? 'Emergencia 24h'
       : mode === 'specialty' && specialty
-        ? `Esp. ${specialty}`
-        : '—';
+        ? `Especialidad: ${specialty}`
+        : 'Sin filtros';
+
+  const isEmpty = listToRender.length === 0;
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+      {/* Banner superior cuando hay filtros activos */}
       {hasActiveFilters && (
-        <View style={{ position: 'absolute', zIndex: 10, top: 8, left: 8, right: 8 }}>
-          <View style={{
-            backgroundColor: 'white',
-            borderRadius: 12,
-            padding: 10,
-            flexDirection: 'column',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            shadowOpacity: 0.15,
-            shadowRadius: 6,
-            elevation: 3
+        <View
+          style={{
+            position: 'absolute',
+            zIndex: 10,
+            top: theme.spacing(1),
+            left: theme.spacing(1),
+            right: theme.spacing(1),
           }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
-              <Text numberOfLines={1}>Filtros: {bannerText}</Text>
-              <Pressable onPress={clearFilters}>
-                <Text style={{ color: '#007aff', fontWeight: '600' }}>Quitar filtros</Text>
-              </Pressable>
-            </View>
-            <Text style={{ opacity: 0.6, fontSize: 12, marginTop: 4 }}>
-              Mostrando {listToRender.length} de {rows.length} hospitales
+          <Banner
+            text={`Mostrando ${listToRender.length} de ${rows.length}`}
+            severity={severity}
+            onClear={clearFilters}
+          />
+          <Text style={{ marginTop: 6, color: theme.colors.subtext }}>{bannerText}</Text>
+        </View>
+      )}
+
+      {/* Estado vacío bonito */}
+      {isEmpty && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            zIndex: 9,
+            top: hasActiveFilters ? 110 : theme.spacing(3),
+            left: theme.spacing(2),
+            right: theme.spacing(2),
+            alignItems: 'center',
+          }}>
+          <View style={{
+            backgroundColor: '#FFFFFFE6',
+            padding: theme.spacing(2),
+            borderRadius: theme.radius.lg,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            ...theme.shadow.card,
+          }}>
+            <Text style={{ fontWeight: '700', color: theme.colors.text, textAlign: 'center' }}>
+              No hay hospitales para este filtro
+            </Text>
+            <Text style={{ marginTop: 4, color: theme.colors.subtext, textAlign: 'center' }}>
+              Probá quitar o cambiar los filtros
             </Text>
           </View>
         </View>
@@ -146,6 +186,12 @@ export default function MapScreen() {
         ref={mapRef}
         style={{ flex: 1 }}
         onMapReady={handleMapReady}
+        customMapStyle={BLUE_STYLE}
+        showsPointsOfInterest={false}
+        showsBuildings={false}
+        showsTraffic={false}
+        showsCompass={false}
+        toolbarEnabled={false}
         initialRegion={{
           latitude: -25.5097,
           longitude: -54.6111,
@@ -162,6 +208,7 @@ export default function MapScreen() {
               coordinate={c}
               title={h.name}
               description={h.address}
+              // Si más adelante quieres ícono propio: agrega 'image={require(".../pin.png")}'
               onCalloutPress={() => navigation.navigate('Detalle', { hospital: h })}
             />
           );

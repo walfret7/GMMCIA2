@@ -26,13 +26,14 @@ export default function AppTabs() {
         ),
       }}
     >
-      <Tab.Screen name="Chat" component={ChatScreen} />
-      <Tab.Screen name="Lista" component={HospitalScreen} />
+      <Tab.Screen name="Chat" component={ChatScreen}  options={{ headerShown: false }} />
+      <Tab.Screen name="Lista" component={HospitalScreen} options={{ headerShown: false }} />
       <Tab.Screen name="Mapa" component={MapScreen} />
       <Tab.Screen
         name="Salud"
         component={BMIScreen}
-        options={{ tabBarLabel: 'Salud' }}
+        options={{ tabBarLabel: 'Salud', headerShown: false}}
+        
       />
     </Tab.Navigator>
   );

@@ -38,7 +38,7 @@ export default function AuthGate() {
       ) : (
         // No autenticado → flujo Auth
         <>
-          <Stack.Screen name="Login" component={LoginScreen} options={{ title: 'Ingresar' }} />
+          <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Crear cuenta' }} />
           <Stack.Screen name="Detalle" component={HospitalDetailScreen} options={{ title: 'Detalle' }} />
         </>
