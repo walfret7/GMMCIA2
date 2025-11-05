@@ -14,74 +14,69 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import auth from '@react-native-firebase/auth';
 import { useFilters } from '../state/FiltersContext';
+import { predictSymptoms } from '../services/predict'; // ⬅️ IA local (TF-IDF + LR)
+
+const THRESHOLD = 0.50; // umbral de confianza para aceptar IA
 
 /* Util: normaliza texto (sin tildes, minúsculas) */
 const norm = (s = '') =>
   String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 /**
- * Clasificador "reglas+" — NO mezcla emergencia con especialidad.
+ * Clasificador por reglas (fallback). NO mezcla emergencia con especialidad.
  * Devuelve: { mode: 'none'|'emergency'|'specialty', specialty?: string|null, severity: 1..5 }
  */
-function classifySymptoms(text) {
+function classifySymptomsRules(text) {
   const t = norm(text || '');
 
   // 1) Emergencia (si hay, gana siempre)
   const emergencyTerms = [
-    // respiratorio severo
-    'no puede respirar', 'no puedo respirar', 'no puede hablar', 'ahogo', 'asfix', 'labios morados',
-    // neurológico
-    'inconscient', 'convulsion', 'convulsi', 'desmayo', 'no reacciona', 'paralisis',
-    // cardiaco severo
-    'dolor de pecho intenso', 'opresion toracica', 'opresion en el pecho', 'dolor toracico fuerte',
-    // sangrado/trauma
-    'sangrado abundante', 'hemorrag', 'fractura expuesta', 'quemadura grave',
-    // evento vascular
-    'acv', 'ictus', 'derrame'
+    'no puede respirar','no puedo respirar','no puede hablar','ahogo','asfix','labios morados',
+    'inconscient','convulsion','convulsi','desmayo','no reacciona','paralisis',
+    'dolor de pecho intenso','opresion toracica','opresion en el pecho','dolor toracico fuerte',
+    'sangrado abundante','hemorrag','fractura expuesta','quemadura grave',
+    'acv','ictus','derrame'
   ];
   const isEmergency = emergencyTerms.some(k => t.includes(k));
 
   // 2) Especialidades (aplica SOLO si NO es emergencia)
   const specMap = [
     { spec: 'cardiología', keys: [
-      'dolor de pecho', 'opresion en el pecho', 'opresion torac',
-      'palpit', 'taquicard', 'hipertens', 'presion alta', 'arritm'
+      'dolor de pecho','opresion en el pecho','opresion torac',
+      'palpit','taquicard','hipertens','presion alta','arritm'
     ]},
     { spec: 'neumología', keys: [
-      'tos persistente', 'tos con flema', 'flema', 'expectoracion', 'expectoración',
-      'falta de aire', 'disnea', 'silbidos', 'sibilancia', 'asma',
-      'bronquitis', 'neumon', 'neumonía', 'dificultad para respirar'
+      'tos persistente','tos con flema','flema','expectoracion','expectoración',
+      'falta de aire','disnea','silbidos','sibilancia','asma','bronquitis','neumon','neumonía','dificultad para respirar'
     ]},
     { spec: 'neurología', keys: [
-      'migraña', 'dolor de cabeza fuerte', 'cefalea intensa',
-      'vision doble', 'visión doble', 'debilidad de un lado',
-      'hormigueo brazo', 'hormigueo pierna', 'mareo intenso'
+      'migraña','dolor de cabeza fuerte','cefalea intensa','vision doble','visión doble',
+      'debilidad de un lado','hormigueo brazo','hormigueo pierna','mareo intenso'
     ]},
     { spec: 'traumatología', keys: [
-      'fractura', 'esguince', 'golpe fuerte', 'trauma', 'dolor de rodilla', 'dolor de espalda', 'dolor de hombro'
+      'fractura','esguince','golpe fuerte','trauma','dolor de rodilla','dolor de espalda','dolor de hombro'
     ]},
     { spec: 'pediatría', keys: [
-      'nino', 'niño', 'bebe', 'bebé', 'fiebre nino', 'otitis nino', 'vomito nino', 'diarrea nino'
+      'nino','niño','bebe','bebé','fiebre nino','otitis nino','vomito nino','diarrea nino'
     ]},
     { spec: 'ginecología', keys: [
-      'embarazo', 'atraso menstrual', 'sangrado vaginal', 'dolor pelvico', 'gineco', 'menstruacion'
+      'embarazo','atraso menstrual','sangrado vaginal','dolor pelvico','gineco','menstruacion'
     ]},
     { spec: 'dermatología', keys: [
-      'erupcion', 'salpullido', 'mancha piel', 'picazon piel', 'dermat'
+      'erupcion','salpullido','mancha piel','picazon piel','dermat'
     ]},
     { spec: 'otorrinolaringología', keys: [
-      'dolor de oido', 'dolor de oído', 'oido tapado', 'sinusitis', 'dolor de garganta', 'amigdal'
+      'dolor de oido','dolor de oído','oido tapado','sinusitis','dolor de garganta','amigdal'
     ]},
     { spec: 'urología', keys: [
-      'dolor al orinar', 'ardor al orinar', 'sangre en orina', 'colico renal', 'piedras', 'prostata'
+      'dolor al orinar','ardor al orinar','sangre en orina','colico renal','piedras','prostata'
     ]},
     { spec: 'endocrinología', keys: [
-      'diabetes', 'glucosa alta', 'tiroid', 'hipotiroid', 'hipertiroid'
+      'diabetes','glucosa alta','tiroid','hipotiroid','hipertiroid'
     ]},
     { spec: 'clínica médica', keys: [
-      'fiebre', 'malestar general', 'resfriado', 'catarro',
-      'dolor abdominal', 'diarrea', 'vomito', 'náusea', 'nausea',
-      'tos', 'dolor muscular'
+      'fiebre','malestar general','resfriado','catarro','dolor abdominal','diarrea',
+      'vomito','náusea','nausea','tos','dolor muscular'
     ]},
   ];
 
@@ -93,45 +88,82 @@ function classifySymptoms(text) {
   // 4) Resolver modo (no mezclar)
   if (isEmergency) return { mode: 'emergency', specialty: null, severity: Math.max(severity, 4) };
 
-  // cardiología prioritaria si hay "dolor de pecho"
   const cardioHit = specMap[0].keys.some(k => t.includes(k));
   if (cardioHit) return { mode: 'specialty', specialty: 'cardiología', severity };
 
-  // resto de especialidades
   for (const row of specMap) {
     if (row.spec === 'cardiología') continue;
     if (row.keys.some(k => t.includes(k))) {
       return { mode: 'specialty', specialty: row.spec, severity };
     }
   }
-
-  // fallback (mejor que 'none' para el flujo)
   return { mode: 'specialty', specialty: 'clínica médica', severity };
+}
+
+/** Mapea etiqueta del modelo → {mode, specialty} del flujo */
+function mapModelLabelToFilters(label) {
+  if (label === 'emergencias') return { mode: 'emergency', specialty: null };
+  return { mode: 'specialty', specialty: label || 'clínica médica' };
+}
+
+// Chip simple
+function Chip({ label, active, onPress }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
 }
 
 export default function ChatScreen() {
   const nav = useNavigation();
   const { setFilters } = useFilters();
   const [text, setText] = useState('');
+  const [profile, setProfile] = useState('adult'); // 'adult' | 'child' | 'pregnant'
 
-  const onAnalyze = () => {
+  const onAnalyze = async () => {
     const t = text.trim();
     if (!t) {
       Alert.alert('Escribe tus síntomas', 'Ej: dolor de pecho y falta de aire');
       return;
     }
-    const { mode, specialty, severity } = classifySymptoms(t);
-    setFilters({ mode, specialty: specialty || '', severity });
 
-    const msg =
-      mode === 'emergency'
-        ? `EMERGENCIA (sev. ${severity})`
-        : mode === 'specialty'
-        ? `Esp.: ${specialty} (sev. ${severity})`
-        : 'No se detectó una especialidad';
+    try {
+      // 1) IA local
+      const ia = await predictSymptoms(t); // {label, confidence, probs}
+      const useIA = ia && typeof ia.confidence === 'number' && ia.confidence >= THRESHOLD;
 
-    Alert.alert('Análisis', msg);
-    nav.navigate('Mapa');
+      let mode, specialty, severity;
+      if (useIA) {
+        const mapped = mapModelLabelToFilters(ia.label);
+        mode = mapped.mode;
+        specialty = mapped.specialty || '';
+        severity = classifySymptomsRules(t).severity;
+      } else {
+        // 2) Fallback a reglas
+        const r = classifySymptomsRules(t);
+        mode = r.mode;
+        specialty = r.specialty || '';
+        severity = r.severity;
+      }
+
+      // Guardar filtros + perfil y navegar
+      setFilters({ mode, specialty, severity, patientProfile: profile });
+
+      const msg =
+        mode === 'emergency'
+          ? `EMERGENCIA (sev. ${severity}) • ${useIA ? 'IA' : 'Reglas'} ${useIA ? `(${(ia.confidence*100).toFixed(0)}%)` : ''}`
+          : `Esp.: ${specialty} (sev. ${severity}) • ${useIA ? 'IA' : 'Reglas'} ${useIA ? `(${(ia.confidence*100).toFixed(0)}%)` : ''}`;
+
+      Alert.alert('Análisis', msg);
+      nav.navigate('Mapa');
+    } catch (err) {
+      console.error('Error en análisis:', err);
+      const { mode, specialty, severity } = classifySymptomsRules(t);
+      setFilters({ mode, specialty: specialty || '', severity, patientProfile: profile });
+      Alert.alert('Análisis', 'Ocurrió un problema con la IA. Se usó el clasificador por reglas.');
+      nav.navigate('Mapa');
+    }
   };
 
   return (
@@ -159,6 +191,13 @@ export default function ChatScreen() {
             onChangeText={setText}
             style={styles.input}
           />
+
+          {/* 🔵 Chips de perfil del paciente */}
+          <View style={styles.chipsRow}>
+            <Chip label="Adulto"   active={profile === 'adult'}    onPress={() => setProfile('adult')} />
+            <Chip label="Niño"     active={profile === 'child'}    onPress={() => setProfile('child')} />
+            <Chip label="Embarazo" active={profile === 'pregnant'} onPress={() => setProfile('pregnant')} />
+          </View>
 
           <TouchableOpacity onPress={onAnalyze} style={styles.primaryBtn}>
             <Text style={styles.primaryBtnText}>Analizar y ver hospitales</Text>
@@ -214,6 +253,35 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#0F172A',
   },
+
+  // 🔵 estilos de chips
+  chipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  chipActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  chipText: {
+    color: '#1E40AF',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  chipTextActive: {
+    color: '#fff',
+  },
+
   primaryBtn: {
     backgroundColor: '#2563EB',
     borderRadius: 12,
