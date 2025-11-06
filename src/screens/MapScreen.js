@@ -1,14 +1,22 @@
 // src/screens/MapScreen.js
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import {
+  View,
+  ActivityIndicator,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+} from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
 import { useNavigation } from '@react-navigation/native';
-import { getAllHospitals } from '../services/hospitals';
+
+import { getAllHospitals, applyFilters } from '../services/hospitals';
 import { useFilters } from '../state/FiltersContext';
 import Banner from '../components/Banner';
 import theme from '../theme';
 
-// Normaliza: sin tildes, sin espacios/guiones, minúsculas
+// ---- utilidades ----
 function normalize(str = '') {
   return String(str)
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -34,6 +42,36 @@ function toCoord(location) {
   return null;
 }
 
+function isValidLatLng({ latitude, longitude }) {
+  return Number.isFinite(latitude) && Number.isFinite(longitude)
+    && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180;
+}
+
+function haversineKm(a, b) {
+  const R = 6371;
+  const dLat = (b.latitude - a.latitude) * Math.PI / 180;
+  const dLon = (b.longitude - a.longitude) * Math.PI / 180;
+  const lat1 = a.latitude * Math.PI / 180;
+  const lat2 = b.latitude * Math.PI / 180;
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLon = Math.sin(dLon / 2);
+  const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function findNearestSafe(rows, userCoord) {
+  const u = userCoord;
+  if (!u || !isValidLatLng(u)) return null;
+  let best = null;
+  for (const h of rows) {
+    const c = toCoord(h.location);
+    if (!c || !isValidLatLng(c)) continue;
+    const d = haversineKm(u, c);
+    if (!best || d < best.distanceKm) best = { hospital: h, distanceKm: d, coord: c };
+  }
+  return best;
+}
+
 /** Estilo azulado (Google Maps JSON) + ocultar POIs/negocios */
 const BLUE_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#eaf2ff' }] },
@@ -51,9 +89,15 @@ const BLUE_STYLE = [
 
 export default function MapScreen() {
   const navigation = useNavigation();
+  const mapRef = useRef(null);
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const mapRef = useRef(null);
+  const [locLoading, setLocLoading] = useState(false);
+
+  // Ubicación del usuario desde el propio MapView
+  const [liveUserCoord, setLiveUserCoord] = useState(null); // { latitude, longitude }
+  const [nearest, setNearest] = useState(null);              // { hospital, distanceKm, coord }
 
   const { mode, specialty, severity, hasActiveFilters, clearFilters } = useFilters();
   const normSpec = useMemo(() => normalize(specialty), [specialty]);
@@ -73,38 +117,24 @@ export default function MapScreen() {
     return () => { mounted = false; };
   }, []);
 
-  // -------- FILTRADO según modo --------
-  const listToRender = useMemo(() => {
-    if (!hasActiveFilters) return rows;
+  const listToRender = useMemo(
+    () => applyFilters(rows, { mode, specialty }),
+    [rows, mode, specialty]
+  );
 
-    if (mode === 'emergency') {
-      return rows.filter(h => h.emergency24h === true);
-    }
+  useEffect(() => { setNearest(null); }, [mode, specialty]);
 
-    if (mode === 'specialty' && normSpec) {
-      return rows.filter(h => {
-        const list = Array.isArray(h.specialties) ? h.specialties : [];
-        const normList = list.map(s => normalize(s));
-        return normList.some(ns => ns === normSpec || ns.includes(normSpec) || normSpec.includes(ns));
-      });
-    }
-
-    return rows;
-  }, [rows, hasActiveFilters, mode, normSpec]);
-
-  // clave para forzar remount y evitar markers “fantasma”
   const mapKey = useMemo(() => {
     const ids = listToRender.map(h => h.id).join('|');
     return `${ids}::${mode}::${normSpec}`;
   }, [listToRender, mode, normSpec]);
 
-  // encuadre del mapa
-  const doFit = useCallback(() => {
+  const doFitAll = useCallback(() => {
     const coords = listToRender.map(h => toCoord(h.location)).filter(Boolean);
     if (coords.length && mapRef.current) {
       try {
         mapRef.current.fitToCoordinates(coords, {
-          edgePadding: { top: 110, right: 40, bottom: 80, left: 40 }, // más espacio por banner
+          edgePadding: { top: 110, right: 40, bottom: 130, left: 40 },
           animated: true,
         });
       } catch {}
@@ -112,12 +142,56 @@ export default function MapScreen() {
   }, [listToRender]);
 
   const handleMapReady = useCallback(() => {
-    setTimeout(doFit, 250);
-  }, [doFit]);
+    setTimeout(doFitAll, 250);
+  }, [doFitAll]);
 
   useEffect(() => {
-    if (!loading) setTimeout(doFit, 150);
-  }, [loading, doFit]);
+    if (!loading) setTimeout(doFitAll, 150);
+  }, [loading, doFitAll]);
+
+  // Tomamos la ubicación del evento del MapView (evita geolocation-service)
+  const onUserLocationChange = useCallback((e) => {
+    const c = e?.nativeEvent?.coordinate;
+    if (!c) return;
+    const u = { latitude: c.latitude, longitude: c.longitude };
+    if (isValidLatLng(u)) setLiveUserCoord(u);
+  }, []);
+
+  // Resaltar más cercano (modo seguro: sin mover cámara automáticamente)
+  const handleHighlightNearest = async () => {
+    try {
+      if (!listToRender.length) {
+        Alert.alert('Sin resultados', 'No hay hospitales con los filtros actuales.');
+        return;
+      }
+      if (!liveUserCoord) {
+        Alert.alert('Ubicación', 'Esperá a que aparezca el punto azul de tu ubicación.');
+        return;
+      }
+      setLocLoading(true);
+
+      const best = findNearestSafe(listToRender, liveUserCoord);
+      if (!best?.hospital || !best?.coord) {
+        Alert.alert('Ups', 'No se pudo calcular el hospital más cercano.');
+        return;
+      }
+
+      // Guardamos hospital + coord para Polyline y para centrar manualmente
+      setNearest({ hospital: best.hospital, distanceKm: best.distanceKm, coord: best.coord });
+      Alert.alert('Más cercano', `${best.hospital.name} • ${best.distanceKm.toFixed(1)} km`);
+    } catch (e) {
+      console.warn('Highlight error:', e);
+      Alert.alert('Error', 'Ocurrió un error al resaltar el más cercano.');
+    } finally {
+      setLocLoading(false);
+    }
+  };
+
+  // Botón opcional para centrar la cámara en el más cercano
+  const handleCenter = () => {
+    if (!nearest?.coord || !mapRef.current) return;
+    mapRef.current.animateCamera({ center: nearest.coord, zoom: 16 }, { duration: 500 });
+  };
 
   if (loading) return <ActivityIndicator size="large" style={{ marginTop: 50 }} />;
 
@@ -130,9 +204,12 @@ export default function MapScreen() {
 
   const isEmpty = listToRender.length === 0;
 
+  const nearestText = nearest
+    ? `Más cercano: ${nearest.hospital?.name ?? ''} • ${nearest.distanceKm?.toFixed?.(1) ?? '?'} km aprox.`
+    : null;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      {/* Banner superior cuando hay filtros activos */}
       {hasActiveFilters && (
         <View
           style={{
@@ -145,13 +222,17 @@ export default function MapScreen() {
           <Banner
             text={`Mostrando ${listToRender.length} de ${rows.length}`}
             severity={severity}
-            onClear={clearFilters}
+            onClear={() => { clearFilters(); setNearest(null); }}
           />
           <Text style={{ marginTop: 6, color: theme.colors.subtext }}>{bannerText}</Text>
+          {!!nearestText && (
+            <Text style={{ marginTop: 4, color: theme.colors.text, fontWeight: '700' }}>
+              {nearestText}
+            </Text>
+          )}
         </View>
       )}
 
-      {/* Estado vacío bonito */}
       {isEmpty && (
         <View
           pointerEvents="none"
@@ -185,6 +266,7 @@ export default function MapScreen() {
         key={mapKey}
         ref={mapRef}
         style={{ flex: 1 }}
+        provider={PROVIDER_GOOGLE}
         onMapReady={handleMapReady}
         customMapStyle={BLUE_STYLE}
         showsPointsOfInterest={false}
@@ -192,6 +274,8 @@ export default function MapScreen() {
         showsTraffic={false}
         showsCompass={false}
         toolbarEnabled={false}
+        showsUserLocation={true}
+        onUserLocationChange={onUserLocationChange}
         initialRegion={{
           latitude: -25.5097,
           longitude: -54.6111,
@@ -202,18 +286,63 @@ export default function MapScreen() {
         {listToRender.map(h => {
           const c = toCoord(h.location);
           if (!c) return null;
+          const highlight = nearest?.hospital?.id === h.id;
           return (
             <Marker
               key={h.id}
               coordinate={c}
               title={h.name}
               description={h.address}
-              // Si más adelante quieres ícono propio: agrega 'image={require(".../pin.png")}'
+              pinColor={highlight ? '#F97316' : undefined}
               onCalloutPress={() => navigation.navigate('Detalle', { hospital: h })}
             />
           );
         })}
+
+        {/* Polyline usuario ↔ hospital más cercano */}
+        {nearest?.coord && liveUserCoord && (
+          <Polyline coordinates={[liveUserCoord, nearest.coord]} strokeWidth={4} />
+        )}
       </MapView>
+
+      {/* Botones */}
+      <View style={styles.routeBar}>
+        <TouchableOpacity
+          onPress={handleHighlightNearest}
+          style={styles.routeBtn}
+          disabled={locLoading || isEmpty}
+        >
+          {locLoading
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={styles.routeBtnText}>{nearest ? 'Actualizar más cercano' : 'Resaltar más cercano'}</Text>}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handleCenter}
+          style={[styles.routeBtn, { marginTop: 10, backgroundColor: '#0E7490' }]}
+          disabled={!nearest?.coord}
+        >
+          <Text style={styles.routeBtnText}>Centrar vista</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  routeBar: {
+    position: 'absolute',
+    bottom: 20,
+    left: 16,
+    right: 16,
+    alignItems: 'center',
+  },
+  routeBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    elevation: 3,
+  },
+  routeBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+});
