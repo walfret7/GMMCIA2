@@ -7,7 +7,6 @@ import RegisterScreen from '../screens/RegisterScreen';
 import { ActivityIndicator, View } from 'react-native';
 import HospitalDetailScreen from '../screens/HospitalDetailScreen';
 
-
 const Stack = createNativeStackNavigator();
 
 export default function AuthGate() {
@@ -15,16 +14,24 @@ export default function AuthGate() {
   const [booting, setBooting] = useState(true);
 
   useEffect(() => {
+    // 🔵 Logueamos cada cambio de estado de autenticación
     const unsub = auth().onAuthStateChanged(u => {
       setUser(u);
       setBooting(false);
+
+      if (u) {
+        console.log('Auth: onAuthStateChanged uid=', u.uid);
+      } else {
+        console.log('Auth: onAuthStateChanged signed out');
+      }
     });
+
     return unsub;
   }, []);
 
   if (booting) {
     return (
-      <View style={{flex:1,justifyContent:'center',alignItems:'center'}}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" />
       </View>
     );

@@ -22,15 +22,22 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
 
   const onLogin = async () => {
-    if (!email.trim() || !pass) {
+    const mail = email.trim();
+    if (!mail || !pass) {
       Alert.alert('Faltan datos', 'Ingresá tu email y contraseña.');
       return;
     }
     setLoading(true);
     try {
-      await auth().signInWithEmailAndPassword(email.trim(), pass);
-      // AuthGate te llevará a las tabs
+      await auth().signInWithEmailAndPassword(mail, pass);
+
+      // 🔵 Log de éxito con el UID actual
+      console.log('Auth: signIn success uid=', auth().currentUser?.uid);
+
+      // AuthGate detecta el cambio y te lleva a las tabs
     } catch (e) {
+      // 🔵 Log de error con el código y mensaje
+      console.log('Auth: signIn error', e?.code, e?.message);
       Alert.alert('Inicio de sesión', e?.message || 'No se pudo iniciar sesión.');
     } finally {
       setLoading(false);

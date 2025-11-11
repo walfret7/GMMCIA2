@@ -99,7 +99,12 @@ export default function MapScreen() {
   const [liveUserCoord, setLiveUserCoord] = useState(null); // { latitude, longitude }
   const [nearest, setNearest] = useState(null);              // { hospital, distanceKm, coord }
 
-  const { mode, specialty, severity, hasActiveFilters, clearFilters } = useFilters();
+  // Leemos también origin y score del contexto
+  const {
+    mode, specialty, severity, hasActiveFilters, clearFilters,
+    origin, score
+  } = useFilters();
+
   const normSpec = useMemo(() => normalize(specialty), [specialty]);
 
   useEffect(() => {
@@ -178,6 +183,10 @@ export default function MapScreen() {
 
       // Guardamos hospital + coord para Polyline y para centrar manualmente
       setNearest({ hospital: best.hospital, distanceKm: best.distanceKm, coord: best.coord });
+
+      // Log técnico para TC-020
+      console.log('nearest', best.hospital.name, best.distanceKm.toFixed(2));
+
       Alert.alert('Más cercano', `${best.hospital.name} • ${best.distanceKm.toFixed(1)} km`);
     } catch (e) {
       console.warn('Highlight error:', e);
@@ -202,6 +211,28 @@ export default function MapScreen() {
         ? `Especialidad: ${specialty}`
         : 'Sin filtros';
 
+  // ---------- DEMO de score visible (no afecta la lógica) ----------
+  const DEMO_SCORE_ON = __DEV__ && false;   // poné false para desactivar demo
+  const DEMO_SCORE_VALUE = 0.83;           // 65%
+
+  const originTxt = origin === 'ml' ? 'IA' : 'Reglas';
+
+  // Usamos displayScore solo para mostrar en UI
+  const displayScore = DEMO_SCORE_ON ? DEMO_SCORE_VALUE : score;
+  const scorePct = (typeof displayScore === 'number') ? `${(displayScore * 100).toFixed(0)}%` : null;
+
+  const scoreSuffix = scorePct
+    ? (origin === 'ml'
+        ? ` • Score: ${scorePct}${DEMO_SCORE_ON ? ' (demo)' : ''}`
+        : ` • Score IA: ${scorePct}${DEMO_SCORE_ON ? ' (demo)' : ''}`)
+    : '';
+  // ------------------------------------------------------------------
+
+  const analysisText =
+    mode === 'emergency'
+      ? `EMERGENCIA (sev. ${severity}) • ${originTxt}${scoreSuffix}`
+      : `Esp.: ${specialty} (sev. ${severity}) • ${originTxt}${scoreSuffix}`;
+
   const isEmpty = listToRender.length === 0;
 
   const nearestText = nearest
@@ -225,6 +256,12 @@ export default function MapScreen() {
             onClear={() => { clearFilters(); setNearest(null); }}
           />
           <Text style={{ marginTop: 6, color: theme.colors.subtext }}>{bannerText}</Text>
+
+          {/* Análisis visible en el banner */}
+          <Text style={{ marginTop: 4, color: theme.colors.text, fontWeight: '700' }}>
+            {analysisText}
+          </Text>
+
           {!!nearestText && (
             <Text style={{ marginTop: 4, color: theme.colors.text, fontWeight: '700' }}>
               {nearestText}
@@ -287,6 +324,7 @@ export default function MapScreen() {
           const c = toCoord(h.location);
           if (!c) return null;
           const highlight = nearest?.hospital?.id === h.id;
+
           return (
             <Marker
               key={h.id}
@@ -294,7 +332,14 @@ export default function MapScreen() {
               title={h.name}
               description={h.address}
               pinColor={highlight ? '#F97316' : undefined}
-              onCalloutPress={() => navigation.navigate('Detalle', { hospital: h })}
+              onCalloutPress={() => {
+                const recSpec = (mode === 'specialty' && specialty) ? normalize(specialty) : null;
+                console.log('NAV → Detalle', { id: h?.id, name: h?.name });
+                navigation.navigate('Detalle', {
+                  hospital: { id: h.id, ...h },
+                  recommendedSpecialty: recSpec || null,
+                });
+              }}
             />
           );
         })}

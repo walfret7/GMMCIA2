@@ -16,7 +16,7 @@ import auth from '@react-native-firebase/auth';
 import { useFilters } from '../state/FiltersContext';
 import { predictSymptoms } from '../services/predict'; // ⬅️ IA local (TF-IDF + LR)
 
-const THRESHOLD = 0.50; // umbral de confianza para aceptar IA
+const THRESHOLD = 0.35; // umbral de confianza para aceptar IA
 
 /* Util: normaliza texto (sin tildes, minúsculas) */
 const norm = (s = '') =>
@@ -122,49 +122,65 @@ export default function ChatScreen() {
   const [profile, setProfile] = useState('adult'); // 'adult' | 'child' | 'pregnant'
 
   const onAnalyze = async () => {
-    const t = text.trim();
-    if (!t) {
-      Alert.alert('Escribe tus síntomas', 'Ej: dolor de pecho y falta de aire');
-      return;
+  const t = text.trim();
+  if (!t) {
+    Alert.alert('Escribe tus síntomas', 'Ej: dolor de pecho y falta de aire');
+    return;
+  }
+
+  try {
+    // 1) IA local — TC-041 medición robusta 
+    const t0 = (global.performance?.now?.() ?? Date.now());
+    const ia = await predictSymptoms(t); // { label, confidence, probs }
+    const dt = (global.performance?.now?.() ?? Date.now()) - t0;
+    console.log(`TC-041 infer(ms): ${dt.toFixed(0)}`);
+
+    // Log del resultado de la IA
+    console.log('IA->', ia); // ej.: { label: 'neumología', confidence: 0.42, ... }
+
+    // Decisión de uso de IA según umbral
+    const useIA = ia && typeof ia.confidence === 'number' && ia.confidence >= THRESHOLD;
+    const iaScore = (ia && typeof ia.confidence === 'number') ? ia.confidence : null;
+
+    let mode, specialty, severity, origin, score;
+    if (useIA) {
+      const mapped = mapModelLabelToFilters(ia.label);
+      mode = mapped.mode;
+      specialty = mapped.specialty || '';
+      severity = classifySymptomsRules(t).severity; // severidad por reglas
+      origin = 'ml';
+      score = iaScore; // ∈ [0,1]
+    } else {
+      // 2) Fallback a reglas (guardamos score para mostrarlo igualmente)
+      const r = classifySymptomsRules(t);
+      mode = r.mode;
+      specialty = r.specialty || '';
+      severity = r.severity;
+      origin = 'rules';
+      score = iaScore;
     }
 
-    try {
-      // 1) IA local
-      const ia = await predictSymptoms(t); // {label, confidence, probs}
-      const useIA = ia && typeof ia.confidence === 'number' && ia.confidence >= THRESHOLD;
+    // Guardar filtros + perfil + origen/score (para que el Mapa lo muestre)
+    setFilters({ mode, specialty, severity, patientProfile: profile, origin, score });
 
-      let mode, specialty, severity;
-      if (useIA) {
-        const mapped = mapModelLabelToFilters(ia.label);
-        mode = mapped.mode;
-        specialty = mapped.specialty || '';
-        severity = classifySymptomsRules(t).severity;
-      } else {
-        // 2) Fallback a reglas
-        const r = classifySymptomsRules(t);
-        mode = r.mode;
-        specialty = r.specialty || '';
-        severity = r.severity;
-      }
+    const scoreTxt = (typeof score === 'number') ? ` (${(score * 100).toFixed(0)}%)` : '';
+    const msg =
+      mode === 'emergency'
+        ? `EMERGENCIA (sev. ${severity}) • ${origin === 'ml' ? 'IA' : 'Reglas'}${scoreTxt}`
+        : `Esp.: ${specialty} (sev. ${severity}) • ${origin === 'ml' ? 'IA' : 'Reglas'}${scoreTxt}`;
 
-      // Guardar filtros + perfil y navegar
-      setFilters({ mode, specialty, severity, patientProfile: profile });
+    Alert.alert('Análisis', msg);
+    nav.navigate('Mapa');
+  } catch (err) {
+    console.error('Error en análisis:', err);
+    const { mode, specialty, severity } = classifySymptomsRules(t);
+    setFilters({ mode, specialty: specialty || '', severity, patientProfile: profile, origin: 'rules', score: null });
+    Alert.alert('Análisis', 'Ocurrió un problema con la IA. Se usó el clasificador por reglas.');
+    nav.navigate('Mapa');
+  }
+};
 
-      const msg =
-        mode === 'emergency'
-          ? `EMERGENCIA (sev. ${severity}) • ${useIA ? 'IA' : 'Reglas'} ${useIA ? `(${(ia.confidence*100).toFixed(0)}%)` : ''}`
-          : `Esp.: ${specialty} (sev. ${severity}) • ${useIA ? 'IA' : 'Reglas'} ${useIA ? `(${(ia.confidence*100).toFixed(0)}%)` : ''}`;
 
-      Alert.alert('Análisis', msg);
-      nav.navigate('Mapa');
-    } catch (err) {
-      console.error('Error en análisis:', err);
-      const { mode, specialty, severity } = classifySymptomsRules(t);
-      setFilters({ mode, specialty: specialty || '', severity, patientProfile: profile });
-      Alert.alert('Análisis', 'Ocurrió un problema con la IA. Se usó el clasificador por reglas.');
-      nav.navigate('Mapa');
-    }
-  };
 
   return (
     <KeyboardAvoidingView
